@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Semiconductor Supply Chain Forecaster</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: #f5f7fa;
+      color: #1a2b4a;
+      padding: 40px 20px;
+    }
+    .container { max-width: 1000px; margin: 0 auto; }
+    h1 { font-size: 30px; font-weight: 700; }
+    .subtitle { color: #5a6b82; margin-top: 8px; margin-bottom: 28px; }
+    .card-row { display: flex; gap: 16px; margin-bottom: 28px; flex-wrap: wrap; }
+    .card {
+      flex: 1; min-width: 200px; background: #fff; border-radius: 12px;
+      padding: 20px 24px; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .card-label { font-size: 13px; color: #8a98ab; margin-bottom: 8px; }
+    .card-value { font-size: 28px; font-weight: 700; }
+    .chart-box {
+      background: #fff; border-radius: 12px; padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .chart-title { font-size: 16px; font-weight: 600; margin-bottom: 16px; }
+    .footer { text-align: center; color: #8a98ab; font-size: 13px; margin-top: 24px; }
+    .error { text-align: center; color: #c0392b; padding: 40px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Semiconductor Supply Chain Forecaster</h1>
+    <p class="subtitle">US semiconductor production index (FRED: IPG3344S) — next-month forecast via XGBoost</p>
+
+    <div class="card-row" id="cards"></div>
+
+    <div class="chart-box">
+      <div class="chart-title">Last 60 Months + Forecast</div>
+      <canvas id="forecastChart" height="120"></canvas>
+    </div>
+
+    <p class="footer">Model: XGBoost on differenced series · MAE 0.64 (76% better than rolling-average baseline)</p>
+  </div>
+
+  <script>
+    const API = "http://127.0.0.1:8000";
+
+    async function load() {
+      try {
+        const [predRes, histRes] = await Promise.all([
+          fetch(`${API}/predict`),
+          fetch(`${API}/history`),
+        ]);
+        const pred = await predRes.json();
+        const hist = await histRes.json();
+        renderCards(pred);
+        renderChart(hist, pred);
+      } catch (e) {
+        document.querySelector(".container").innerHTML =
+          '<p class="error">Could not reach the API. Make sure the FastAPI server is running on port 8000.</p>';
+      }
+    }
+
+    function renderCards(pred) {
+      const up = pred.predicted_change >= 0;
+      const changeColor = up ? "#2e7d32" : "#c0392b";
+      const arrow = up ? "▲ +" : "▼ ";
+      document.getElementById("cards").innerHTML = `
+        <div class="card">
+          <div class="card-label">Last Known (${pred.last_known_date.slice(0,7)})</div>
+          <div class="card-value">${pred.last_known_value.toFixed(2)}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Forecast (${pred.predicted_date.slice(0,7)})</div>
+          <div class="card-value" style="color:#1f6feb">${pred.predicted_value.toFixed(2)}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Predicted Change</div>
+          <div class="card-value" style="color:${changeColor}">${arrow}${pred.predicted_change.toFixed(2)}</div>
+        </div>
+      `;
+    }
+
+    function renderChart(hist, pred) {
+      // Build labels (YYYY-MM) and two aligned series: actual history, and the forecast point at the end
+      const labels = hist.dates.map(d => d.slice(0, 7));
+      const actual = hist.values.slice();
+
+      // Append forecast month
+      labels.push(pred.predicted_date.slice(0, 7));
+      actual.push(null); // history has no value for the forecast month
+
+      // Forecast series: nulls everywhere except the last point
+      const forecast = new Array(actual.length).fill(null);
+      forecast[forecast.length - 1] = pred.predicted_value;
+
+      const ctx = document.getElementById("forecastChart").getContext("2d");
+      new Chart(ctx, {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [
+            {
+              label: "Actual",
+              data: actual,
+              borderColor: "#1f6feb",
+              borderWidth: 2,
+              pointRadius: 0,
+              tension: 0.2,
+            },
+            {
+              label: "Forecast",
+              data: forecast,
+              borderColor: "#e67e22",
+              backgroundColor: "#e67e22",
+              pointRadius: 6,
+              pointHoverRadius: 7,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          interaction: { mode: "index", intersect: false },
+          plugins: { legend: { position: "top" } },
+          scales: {
+            x: { ticks: { maxTicksLimit: 12, font: { size: 11 } } },
+            y: { ticks: { font: { size: 11 } } },
+          },
+        },
+      });
+    }
+
+    load();
+  </script>
+</body>
+</html>
